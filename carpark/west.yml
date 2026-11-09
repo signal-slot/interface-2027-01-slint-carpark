@@ -1,0 +1,23 @@
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+    - name: signal-slot
+      url-base: https://github.com/signal-slot
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.1
+      import:
+        name-allowlist:      # ビルドに要る module だけ (全 import の約 10GB を避ける)
+          - cmsis
+          - hal_espressif    # Core2 (ESP32)
+          - hal_xtensa
+          - hal_st           # ToF センサ VL53L0X が使う
+          - picolibc
+    - name: slint            # Core2 対応を入れた fork
+      remote: signal-slot
+      revision: zephyr-carpark
+      path: slint
+  self:
+    path: carpark

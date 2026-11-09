@@ -1,0 +1,8 @@
+# west update と west build が作業場所に置くもの
+/.west/
+/zephyr/
+/slint/
+/modules/
+/bootloader/
+/tools/
+/build*/

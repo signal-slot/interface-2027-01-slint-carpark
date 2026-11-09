@@ -1,0 +1,144 @@
+import { Button } from "std-widgets.slint";
+
+enum Screen { vacant, occupied, paying }
+
+component Header inherits Rectangle {
+    in property text <=> label.text;
+    in property font-size <=> label.font-size;
+    label := Text {
+        color: white;
+        font-size: 40px;
+    }
+}
+
+component VacantScreen inherits VerticalLayout {
+    callback park();
+    in property <bool> manual: true;
+    Header { vertical-stretch: 2; background: #1f8a4c; text: "空車"; font-size: 72px; }
+    if root.manual: Button {
+        vertical-stretch: 1;
+        text: "駐車を開始";
+        primary: true;
+        clicked => { root.park(); }
+    }
+}
+
+component OccupiedScreen inherits VerticalLayout {
+    callback start-pay();
+    Header { vertical-stretch: 2; background: #a03a2e; text: "駐車中"; font-size: 72px; }
+    Button {
+        vertical-stretch: 1;
+        text: "精算へ";
+        primary: true;
+        clicked => { root.start-pay(); }
+    }
+}
+
+export global Format {
+    // global の中だけで使う
+    pure function pad2(value: int) -> string {
+        return value < 10 ? "0" + value : value;
+    }
+    // 駐車時間. 料金が 10 秒刻みで上がるので, 秒まで mm:ss で出す.
+    public pure function mmss(seconds: int) -> string {
+        return Format.pad2(Math.floor(seconds / 60)) + ":"
+             + Format.pad2(Math.mod(seconds, 60));
+    }
+}
+
+// 明細の 1 項目. ラベルを小さく上に, 値を大きく下に置く.
+component LabeledValue inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> unit;
+    in property <brush> text-color: white;  // 色帯に載せるので白を初期値に
+    alignment: center;
+    Text {
+        text: root.label; font-size: 14px;
+        horizontal-alignment: center;
+        color: root.text-color;
+    }
+    HorizontalLayout {
+        alignment: center; spacing: 3px;
+        // 数字は右寄せの固定幅. 桁が増えても単位の位置が動かない
+        Text {
+            text: root.value; font-size: 24px;
+            horizontal-alignment: root.unit == "" ? center : right;
+            width: root.unit == "" ? self.preferred-width : 58px;
+            color: root.text-color;
+        }
+        if root.unit != "": Text {
+            text: root.unit; font-size: 24px;
+            color: root.text-color;
+        }
+    }
+}
+
+export global ParkingState {
+    in-out property <bool> occupied: false;
+    in-out property <int> parked-seconds: 0;
+    // 料金の規則: 10 秒ごとに 10 円 (切り上げ)
+    pure function fee-for(seconds: int) -> int {
+        return Math.ceil(seconds / 10) * 10;
+    }
+    out property <int> fee:
+        ParkingState.fee-for(ParkingState.parked-seconds);
+}
+
+component PayingScreen inherits VerticalLayout {
+    in property <string> parked-time;  // 外から入る値
+    in property <int> due;
+    callback paid();                   // 外へ知らせる出来事
+    callback cancel-pay();
+    // 精算中の帯. 空車 (緑)・駐車中 (赤) と同じ色帯の並びで, 精算はオレンジ.
+    Rectangle {
+        vertical-stretch: 2;
+        background: #ae5600;
+        HorizontalLayout {
+            alignment: center; spacing: 28px;
+            LabeledValue { label: "駐車時間"; value: root.parked-time; }
+            LabeledValue { label: "料金"; value: root.due; unit: "円"; }
+        }
+    }
+    HorizontalLayout {
+        vertical-stretch: 1;
+        Button {
+            text: "取り消す";
+            clicked => { root.cancel-pay(); }
+        }
+        Button {
+            text: "支払い完了"; primary: true;
+            clicked => { root.paid(); }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    preferred-width: 320px;   // Core2 の画面の大きさ
+    preferred-height: 240px;
+    default-font-size: root.height / 10;
+    out property <Screen> screen: Screen.vacant;
+    in property <bool> has-tof;
+    callback arrive();
+    arrive => { ParkingState.occupied = true;
+                ParkingState.parked-seconds = 0; root.screen = Screen.occupied; }
+
+    if root.screen == Screen.vacant: VacantScreen { manual: !root.has-tof; park => { root.arrive(); } }
+    if root.screen == Screen.occupied: OccupiedScreen {
+        start-pay => { root.screen = Screen.paying; }
+    }
+    if root.screen == Screen.paying: PayingScreen {
+        parked-time: Format.mmss(ParkingState.parked-seconds);
+        due: ParkingState.fee;
+        paid => {
+            ParkingState.occupied = false;
+            root.screen = Screen.vacant;
+        }
+        cancel-pay => { root.screen = Screen.occupied; }
+    }
+    Timer {
+        interval: 1s;
+        running: ParkingState.occupied;
+        triggered => { ParkingState.parked-seconds += 1; }
+    }
+}
