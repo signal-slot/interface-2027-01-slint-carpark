@@ -23,7 +23,7 @@ M5Stack Core2 で動くコイン・パーキングの精算機を、GUI フレ�
 |---|---|
 | M5Stack Core2 **v1.3** | 本体。画面、タッチ、電池 |
 | Module ExtPort For Core2 | 本体の背面に積んで、Grove の差し込み口を Port B〜E に増やす |
-| RGB LED Unit（SK6812 × 3） | 空車・駐車中・精算中を色で知らせる |
+| RGB LED Unit（SK6812 × 3） | 空いていれば緑、車がいれば赤に光る |
 | ToF Unit（VL53L0X） | 車が来たことを距離で見つける |
 | サーボモータ（FeeTech FS0403） | フラップ板を上げ下げする |
 | QR Code Unit | 精算に使う QR コードを読む |
