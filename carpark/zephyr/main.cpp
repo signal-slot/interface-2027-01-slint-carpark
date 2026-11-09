@@ -1,6 +1,6 @@
 /*
- * Copyright © SixtyFPS GmbH <info@slint.dev>
- * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tasuku Suzuki
+ * SPDX-License-Identifier: MIT OR Apache-2.0
  *
  * 精算機の main (記事のリストを束ねた版). 画面は必ず動く. 周辺ユニットは
  * 「宣言 (overlay の alias) がコンパイル時にあるか」と「実物が実行時に応答するか

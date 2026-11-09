@@ -1,6 +1,6 @@
 /*
- * Copyright © SixtyFPS GmbH <info@slint.dev>
- * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tasuku Suzuki
+ * SPDX-License-Identifier: MIT OR Apache-2.0
  *
  * Core2 本体の Port A と, 背面に積んだ Module ExtPort For Core2 の各ポート.
  *
