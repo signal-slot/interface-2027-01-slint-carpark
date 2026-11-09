@@ -8,10 +8,12 @@ M5Stack Core2 で動くコイン・パーキングの精算機を、GUI フレ�
 
 | ブランチ | 中身 |
 |---|---|
-| `main`（このブランチ） | 記事で作るもの。タッチ操作と、ToF センサによる入庫の自動検知まで |
-| [`full`](../../tree/full) | 記事の写真1の完成形。LED、サーボモータ（フラップ板）、QR コード・リーダも動かす |
+| [`main`](../../tree/main) | 記事で作るもの。タッチ操作と、ToF センサによる入庫の自動検知まで |
+| `full`（このブランチ） | 記事の写真1の完成形。LED、サーボモータ（フラップ板）、QR コード・リーダも動かす |
 
-記事を読みながら試すときは `main` を使ってください。`full` は、記事の最後で読者への宿題にした部品を全部付けた例です。宿題の答え合わせや、配線の参考にしてください。
+このブランチは、記事の最後で読者への宿題にした部品を全部付けた例です。宿題の答え合わせや、配線の参考にしてください。記事を読みながら試すときは `main` を使ってください。
+
+どの部品もなくて構いません。つながっていない部品は使わずに動き、その代わりの操作を画面のボタンで出します。M5Stack Core2 単体でも、PC 上でも、画面だけのアプリとしてそのまま動きます。
 
 ## 用意するもの
 
@@ -20,13 +22,34 @@ M5Stack Core2 で動くコイン・パーキングの精算機を、GUI フレ�
 | 品名 | 役割 |
 |---|---|
 | M5Stack Core2 **v1.3** | 本体。画面、タッチ、電池 |
+| Module ExtPort For Core2 | 本体の背面に積んで、Grove の差し込み口を Port B〜E に増やす |
+| RGB LED Unit（SK6812 × 3） | 空車・駐車中・精算中を色で知らせる |
 | ToF Unit（VL53L0X） | 車が来たことを距離で見つける |
-| Grove ケーブル | ToF Unit と本体の Port A をつなぐ（ToF Unit に付属） |
+| サーボモータ（FeeTech FS0403） | フラップ板を上げ下げする |
+| QR Code Unit | 精算に使う QR コードを読む |
+| フラップ板 | 3D プリンタで作る（`hardware/flap-board.stl`） |
+| Grove ケーブル | 各ユニットと本体をつなぐ（各ユニットに付属） |
 | USB Type-C ケーブル | PC とつなぐ。**データ通信に対応したもの**を使う |
 
 M5Stack Core2 には電源 IC の違う版があります。Zephyr が対応しているのは電源 IC が AXP192 の版で、いま買えるのは v1.3（型番 K010-V13）です。v1.1（AXP2101）では動きません。
 
-ToF Unit がなくても、画面のボタンで入庫を操作して一通り動かせます。
+サーボモータは FS0403 のように動作電流の小さいものを使ってください。9g 級のサーボの多くは動き出しに大きな電流を引き、Grove の 5V では本体ごと電源が落ちます。
+
+### つなぎ方
+
+| 差し込み口 | つなぐもの | 使うピン |
+|---|---|---|
+| 本体の Port A | RGB LED Unit | G32 |
+| ExtPort の Port B | サーボモータ | G26（PWM） |
+| ExtPort の Port C | ToF Unit | G13（SCL）、G14（SDA） |
+| ExtPort の Port D | 空き（読者の拡張用） | G34、G35 |
+| ExtPort の Port E | QR Code Unit | G19（TX）、G27（RX） |
+
+- ExtPort の DIP スイッチは、Port E の「19」と「27」を両方 ON にします。片方だけだと、命令は送れるのに返事が来ない、という分かりにくい壊れ方をします。
+- QR Code Unit の本体のスイッチは UART 側にしておきます。
+- `main` では ToF Unit を本体の Port A に挿していましたが、このブランチでは Port A を LED に使うので、ToF Unit は ExtPort の Port C に挿します。
+
+どこに何をつなぐかは `carpark/zephyr/boards/m5stack_core2_esp32_procpu.overlay` に書いてあります。つなぎ方を変えるときは、このファイルを直します。
 
 ### PC
 
@@ -96,17 +119,21 @@ $ west flash
 |---|---|---|
 | `carpark/west.yml` | Zephyr と Slint をどこから取ってくるか | リスト11 |
 | `carpark/ui/carpark.slint` | 画面一式 | リスト1〜8、ToF センサの節の変更 |
-| `carpark/zephyr/main.cpp` | 画面と ToF センサをつなぐ | リスト9、リスト14 |
+| `carpark/zephyr/main.cpp` | 画面と各部品をつなぐ | リスト9、リスト14 に LED・サーボ・QR を足したもの |
 | `carpark/zephyr/CMakeLists.txt` | ビルドの設定 | リスト10 |
-| `carpark/zephyr/prj.conf` | センサを使う設定（`CONFIG_SENSOR=y`） | ToF センサの節 |
-| `carpark/zephyr/boards/m5stack_core2_esp32_procpu.overlay` | Port A に ToF センサがつながっていることを書く | リスト13 |
+| `carpark/zephyr/boards/m5stack_core2_esp32_procpu.conf` | 各部品のドライバを使う設定 | ― |
+| `carpark/zephyr/boards/m5stack_core2_esp32_procpu.overlay` | どこに何がつながっているかを書く | リスト13 を広げたもの |
+| `carpark/zephyr/dts/bindings/pwm-servo.yaml` | サーボモータをデバイス・ツリーに書くための定義（Zephyr のサンプルから） | ― |
+| `hardware/flap-board.stl` | フラップ板の 3D データ | ― |
 
 `CMakeLists.txt` は、Slint 側の `demos/zephyr-common/slint-zephyr-app.cmake` を読み込むだけです。Rust のビルドの指定、ボードごとの設定、Slint を Zephyr の上で動かすためのコード、M5Stack の Grove の 5V を入れる処理などは、そちらが引き受けます。
 
 ## うまくいかないとき
 
 - **書き込みが途中で止まる、つながらない**：USB ケーブルを替えてみてください。充電専用のケーブルや、接触の悪いケーブルでは書き込めません。
-- **ToF センサを挿したのにボタンが消えない**：ToF センサは起動時に見つけます。挿したら M5Stack をリセットしてください。ToF Unit が Port A（本体側面の赤い差し込み口）に挿さっているかも確かめます。
+- **部品を挿したのに使われない**：部品は起動時に見つけます。挿したら M5Stack をリセットしてください。差し込み口が上の「つなぎ方」のとおりかも確かめます。
+- **サーボモータが動くと電源が落ちる**：サーボモータの電流が大きすぎます。上の「ハードウェア」の注意を見てください。
+- **QR コードを読んでも反応しない**：ExtPort の DIP スイッチ（Port E の 19 と 27）と、QR Code Unit 本体のスイッチを確かめます。
 - **`west build` で、Slint の Platform コードの警告が幾つか出る**：動作には影響しません。
 
 ## ライセンス

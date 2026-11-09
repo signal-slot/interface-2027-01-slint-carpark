@@ -1,17 +1,249 @@
-/* Core2 本体の Port A (G32/G33). i2c1 の既定のピンがそのまま Port A なので,
- * status を okay にして ToF のノードを足すだけ. */
-&i2c1 {
-    status = "okay";
-    clock-frequency = <I2C_BITRATE_STANDARD>;
+/*
+ * Copyright © SixtyFPS GmbH <info@slint.dev>
+ * SPDX-License-Identifier: MIT
+ *
+ * Core2 本体の Port A と, 背面に積んだ Module ExtPort For Core2 の各ポート.
+ *
+ *   Port A (G32)     : RGB LED (SK6812). SPI の MOSI で波形を作る.
+ *                      Zephyr の WS2812 ビットバン・ドライバは nRF 専用で,
+ *                      ESP32 には RMT ドライバも無いため.
+ *   Port B (G26/G36) : フラップ板のサーボ. PWM は G26. G36 は入力専用で未使用.
+ *   Port C (G13/G14) : ToF 測距センサ (VL53L0X). I2C.
+ *   Port D (G34/G35) : 空けてある. 下記参照.
+ *   Port E (G27/G19) : QR コードスキャナ. UART.
+ *                      Grove の黄線が G19, 白線が G27 (ExtPort の pin map).
+ *                      スキャナは黄で受けて白で送るので, TX=G19, RX=G27.
+ *                      ExtPort の DIP は Port E の「19」と「27」を ON にする.
+ *                      片方だけだと, 送れるのに返事が来ない中途半端な壊れ方を
+ *                      する (サーボは 1 線しか使わないので気付けない).
+ *
+ * ToF とサーボは板の近くに置くので, 隣り合う B と C に寄せてある.
+ * サーボが B なのは G36 が入力専用で, D (G34/G35 とも入力専用) には
+ * PWM も I2C も置けないため. この 2 つは物理的にここしか選べない.
+ *
+ * 周辺機器はどれも必須ではない.
+ *
+ *   Core2 単体         画面とタッチだけで一通り動く. 入庫と出庫はボタンになる.
+ *   Core2 + どれか 1 つ 本体の Port A にはどれか 1 つを挿せる.
+ *   Core2 + ExtPort    4 つを同時に挿して全部組み合わせられる.
+ *
+ * どれが繋がっているかは, この overlay の aliases が決める. アプリは alias が
+ * あるかどうかをコンパイル時に, device_is_ready() を実行時に見て, 無いものは
+ * 画面のボタンで代わりを出す. この overlay の無いボードやパソコン上でも,
+ * 画面だけのアプリとしてそのまま動く.
+ *
+ * Port D は読者のために空けてある. 照度センサを挿してナイトモードにしても,
+ * 人感センサを挿して人が近づいたときだけ画面を点けてもよい. G34/G35 はどちらも
+ * 入力専用ピンなので, デジタル入力かアナログ入力か UART の受信に向く.
+ * I2C のユニットなら, Port C と同じバスに Bottom2 の PORT.C からぶら下げる
+ * こともできる (アドレスが被らないこと).
+ */
 
-    tof: vl53l0x@29 {
-        compatible = "st,vl53l0x";
-        reg = <0x29>;
-    };
-};
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/led/led.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-    aliases {
-        carpark-tof = &tof;
-    };
+	flap: flap {
+		compatible = "pwm-servo";
+		pwms = <&ledc0 0 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+		/* FeeTech FS0403. 900〜2100 us で約 120 度.
+		 * 9 g 級のサーボは動き出しにほぼ停動電流を引き, Core2 の Grove 5V
+		 * では本体ごと電源が落ちる. FS0403 は動作 70 mA で収まる. */
+		min-pulse = <PWM_USEC(900)>;
+		max-pulse = <PWM_USEC(2100)>;
+	};
+
+	/* アプリは node label ではなく alias で周辺機器を引く.
+	 *
+	 * node label はボードごとに意味が違う. たとえば uart1 は, このボードでは
+	 * Port B に出ている QR スキャナの線だが, 別のボードでは無関係の UART である.
+	 * alias なら「この駐車場アプリの何なのか」を宣言することになるので,
+	 * 取り違えようがない. アプリ側は alias の有無だけを見て,
+	 * 無ければその周辺機器を使わない実装に切り替える. */
+	aliases {
+		carpark-scanner = &uart1;
+		carpark-tof = &tof;
+		carpark-indicator = &indicator;
+		carpark-flap = &flap;
+		carpark-buzzer = &vib_motor;
+		carpark-bus-enable = &bus_pwr_en;
+		carpark-bus-5v = &bus_5v;
+		carpark-unit-bus = &i2c1;
+	};
+};
+
+&pinctrl {
+	ledc0_flap: ledc0_flap {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO26>;
+			output-enable;
+		};
+	};
+
+	uart1_qr: uart1_qr {
+		group1 {
+			pinmux = <UART1_TX_GPIO19>;
+			output-enable;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO27>;
+		};
+	};
+
+	uart2_gps: uart2_gps {
+		group1 {
+			pinmux = <UART2_RX_GPIO34>;
+		};
+	};
+
+	spim2_ws2812: spim2_ws2812 {
+		group1 {
+			pinmux = <SPIM2_MOSI_GPIO32>;
+			output-enable;
+		};
+	};
+};
+
+/* Port A: RGB LED. 6.4MHz で 1 ビットを 8 シンボルに展開し, WS2812 の波形を作る. */
+&spi2 {
+	status = "okay";
+	pinctrl-0 = <&spim2_ws2812>;
+	pinctrl-names = "default";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* WS2812 を SPI で駆動するための回避策. これが無いと待機レベルが合わない. */
+	line-idle-low;
+
+	indicator: ws2812@0 {
+		compatible = "worldsemi,ws2812-spi";
+		reg = <0>;
+		spi-max-frequency = <6400000>;
+		/* spi-cpha は外してある. 立てると MOSI がクロックの半周期 (6.4MHz で
+		 * 78 ns) ずれる. 転送の途中は前後のビットで辻褄が合うが, 先頭の
+		 * シンボルだけは崩れる. それはチェーン先頭の LED の最初のバイト
+		 * (color-mapping が GREEN 先頭なので緑) に当たり, 1 個目だけが
+		 * 色は合っているのに暗い, という症状になる. */
+		chain-length = <3>;
+		color-mapping = <LED_COLOR_ID_GREEN LED_COLOR_ID_RED LED_COLOR_ID_BLUE>;
+		spi-one-frame = <0xf0>;  /* 625 ns high, 625 ns low */
+		spi-zero-frame = <0xc0>; /* 312.5 ns high, 937.5 ns low */
+	};
+};
+
+&ledc0 {
+	pinctrl-0 = <&ledc0_flap>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel0@0 {
+		reg = <0x0>;
+		timer = <0>;
+	};
+};
+
+/* Port C: ToF. Core2 の既定は Port A なので, ピンを振り直す. */
+&pinctrl {
+	i2c1_tof: i2c1_tof {
+		group1 {
+			/* M5Stack の Grove は pin1 = 白, pin2 = 黄. I2C では pin1 = SCL.
+			 * Core2 本体の Port A が sda = G32 (黄), scl = G33 (白) で,
+			 * ExtPort の Port C は白 = G13, 黄 = G14 なので
+			 * SCL = G13, SDA = G14 になる. */
+			pinmux = <I2C1_SDA_GPIO14>,
+				 <I2C1_SCL_GPIO13>;
+			drive-open-drain;
+			output-high;
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c1_tof>;
+	pinctrl-names = "default";
+	sda-gpios = <&gpio0 14 GPIO_OPEN_DRAIN>;
+	scl-gpios = <&gpio0 13 GPIO_OPEN_DRAIN>;
+
+	tof: vl53l0x@29 {
+		compatible = "st,vl53l0x";
+		reg = <0x29>;
+	};
+};
+
+/* Port E: QR コードスキャナ. 本体のスイッチを UART 側にしておくこと. */
+&uart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart1_qr>;
+	pinctrl-names = "default";
+};
+
+/* Port D は読者の拡張用に空けてある.
+ *
+ * ここは何を挿してもよい. 照度センサでナイトモード, 人感センサで人が近づいた
+ * ときだけ画面を点ける, GPS で時刻を合わせる, など.
+ * 使うときは status を okay にし, ExtPort の Port D の DIP を 34/35 側にする.
+ * 例として GPS (NMEA) を繋ぐ形を残してある. */
+&uart2 {
+	status = "disabled";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart2_gps>;
+	pinctrl-names = "default";
+
+	gps: gnss-nmea-generic {
+		compatible = "gnss-nmea-generic";
+	};
+};
+
+/*
+ * Grove の 5V (BUS_5V) を Core2 自身で作るための設定.
+ *
+ * Core2 では USB の 5V は AXP192 の ACIN に入り, Grove/M-Bus の 5V は別系統の
+ * BUS_5V である. BUS_5V を駆動できるのは EXTEN で有効にする SY7088 boost だけで,
+ * その入力は AXP192 の IPSOUT である. ところが BUS_5V は AXP192 の VBUS 入力にも
+ * 繋がっているので, VBUS 入力を有効にしたまま boost を入れると
+ * IPSOUT -> boost -> VBUS -> IPSOUT の帰還ループになり, レールが落ちて本体ごと
+ * 電源が切れる.
+ *
+ * M5Stack の AXP192::SetBusPowerMode(0) は, boost を入れる前に GPIO0 を LDO 出力に
+ * して N_VBUSEN を吊り上げ, VBUS 入力を切っている. board の dts は GPIO0 を
+ * open-drain 出力の gpio-hog (bus_pwr_en) にしているが, open-drain の "high" は
+ * 単に線を離すだけで, Core2 の N_VBUSEN は外付けプルダウンで low のままになる.
+ * つまり board 標準の設定では VBUS 入力を切れず, bus_5v は安全に使えない.
+ *
+ * ここでは hog を外し, 同じ GPIO0 を Zephyr の LDOIO0 regulator として宣言する.
+ * regulator_axp192 は LDOIO0 の enable で GPIO0 を LDO モードに切り替えるので,
+ * これが SetBusPowerMode(0) の前半と一致する.
+ */
+&axp192_gpio {
+	/delete-node/ axp192_gpio0;
+};
+
+&axp192_regulator {
+	bus_pwr_en: LDOIO0 {
+		regulator-init-microvolt = <3300000>;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+};
+
+/*
+ * board の dts が ft5336 に screen-width / screen-height を設定しているが,
+ * Core2 は swapped-x-y だけで反転を使わない. input_touch.c がこれらを読むのは
+ * inverted-x / inverted-y が立っているときだけで, binding も
+ * 「反転しない軸では既定の 0 が正しい値」と明記している.
+ *
+ * 値が入っていると input_touch.c のアサーション
+ *   __ASSERT(cfg->inverted_y == (cfg->screen_height > 0), ...)
+ * が false == true になり, タッチした瞬間にカーネルパニックで停止する.
+ * 使わない寸法なので消す.
+ */
+&ft5336_touch {
+	/delete-property/ screen-width;
+	/delete-property/ screen-height;
 };
