@@ -23,9 +23,8 @@
  *
  * 周辺機器はどれも必須ではない.
  *
- *   Core2 単体         画面とタッチだけで一通り動く. 入庫と出庫はボタンになる.
- *   Core2 + どれか 1 つ 本体の Port A にはどれか 1 つを挿せる.
- *   Core2 + ExtPort    4 つを同時に挿して全部組み合わせられる.
+ *   Core2 単体         画面とタッチだけで一通り動く. 入庫と精算はボタンになる.
+ *   Core2 + ExtPort    4 つを同時に挿して全部組み合わせられる. どれが欠けてもよい.
  *
  * どれが繋がっているかは, この overlay の aliases が決める. アプリは alias が
  * あるかどうかをコンパイル時に, device_is_ready() を実行時に見て, 無いものは
@@ -41,7 +40,6 @@
 
 #include <zephyr/dt-bindings/pwm/pwm.h>
 #include <zephyr/dt-bindings/led/led.h>
-#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
 	flap: flap {
@@ -57,7 +55,7 @@
 	/* アプリは node label ではなく alias で周辺機器を引く.
 	 *
 	 * node label はボードごとに意味が違う. たとえば uart1 は, このボードでは
-	 * Port B に出ている QR スキャナの線だが, 別のボードでは無関係の UART である.
+	 * Port E に出ている QR スキャナの線だが, 別のボードでは無関係の UART である.
 	 * alias なら「この駐車場アプリの何なのか」を宣言することになるので,
 	 * 取り違えようがない. アプリ側は alias の有無だけを見て,
 	 * 無ければその周辺機器を使わない実装に切り替える. */
@@ -67,7 +65,6 @@
 		carpark-indicator = &indicator;
 		carpark-flap = &flap;
 		carpark-buzzer = &vib_motor;
-		carpark-unit-bus = &i2c1;
 	};
 };
 

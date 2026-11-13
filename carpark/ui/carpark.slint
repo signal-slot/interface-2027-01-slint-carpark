@@ -157,7 +157,8 @@ export component AppWindow inherits Window {
     // 入口は 2 つ (画面のボタンと, センサ). その先の処理はここに 1 つだけ.
     // C++ からは invoke_arrive / invoke_paid で, ボタンからは下の各画面から呼ぶ.
     // C++ が起動時に device_is_ready() の結果を入れる. UI はこれで
-    // 手動ボタンを出すか決める. 既定は true (ユニット無しでも操作できる).
+    // 手動ボタンを出すか決める. 既定は false で, ユニットが無ければ
+    // ボタンで操作できる.
     in property <bool> has-tof: false;
     in property <bool> has-scanner: false;
     callback arrive();
@@ -198,15 +199,12 @@ export component AppWindow inherits Window {
     callback blink-changed();
     changed blink => { root.blink-changed(); }
 
-    // QR スキャナは精算画面のあいだだけ読む. 画面が変わるたびに, 今が精算中か
-    // どうかを C++ へ知らせる. C++ はこの通知で読み取りを開始・停止する.
-    callback scanning-changed(bool);
+    // 警報を抜けたら点滅を消灯の側で止める.
     changed screen => {
-        root.scanning-changed(root.screen == Screen.paying);
         if root.screen != Screen.alarm { root.blink = false; }
     }
 
-    // LED 用 (リスト 16).
+    // LED 用.
     // LED は画面用の色をそのまま使うと白っぽく光る (3 チャンネルとも値を持つ
     // 淡い色は, 暗くしても彩度が上がらないため). LED 専用に彩度を上げた色にする.
     // 警報中は blink に合わせて赤を点滅させる.
@@ -217,7 +215,7 @@ export component AppWindow inherits Window {
     callback led-color-changed();
     changed led-color => { root.led-color-changed(); }
 
-    // フラップ板. 完動版に合わせ, パルス幅 (us) で持つ. 中央 1500, ±150 = ±15 度.
+    // フラップ板. 角度ではなくサーボのパルス幅 (us) で持つ. 中央 1500, ±150 = ±15 度.
     // 車が居るあいだは立てて (1350) ロックし, 空車では伏せて (1650) 出られるようにする.
     out property <int> flap-goal: root.screen == Screen.vacant ? 1650 : 1350;
     out property <int> flap-angle: root.flap-goal;
