@@ -47,7 +47,8 @@ static int tof_read_mm(const device *tof)
  *   23 61 41     ping        24 61 41 が返れば通信路が生きている
  *   21 61 41 00  手動モード   命令したときだけ読む
  *   32 75 01/02  読み取り 開始 (照明が点く) / 停止
- * 結果は生テキスト. 制御応答 33 75 02 と 22 61 41 は結果ではない.
+ * 結果は生テキスト. 制御応答 (33 75 xx, 22 61 41 xx, 24 61 41) は結果ではない.
+ * 電源投入の直後は, 応答の前に 00 が混じることがある.
  */
 #if DT_NODE_EXISTS(DT_ALIAS(carpark_scanner))
 static const device *qr = DEVICE_DT_GET(DT_ALIAS(carpark_scanner));
@@ -61,30 +62,48 @@ static void qr_send(const uint8_t *cmd, size_t len)
 
 static void qr_set_decode(bool on)
 {
+    if (on) {
+        /* 起動時の手動モードの応答などが溜まっている. 読み始める前に捨てる. */
+        unsigned char c;
+        while (uart_poll_in(qr, &c) == 0) {
+        }
+    }
     const uint8_t cmd[] = { 0x32, 0x75, uint8_t(on ? 0x01 : 0x02) };
     qr_send(cmd, sizeof(cmd));
     printk("qr: 読み取り%s\n", on ? "開始" : "停止");
 }
 
+/* 受け取ったものから 00 と制御応答を除き, 文字が残れば読み取り結果とする. */
 static bool qr_read(char *text, size_t cap)
 {
-    static uint8_t buf[128];
-    static size_t len;
+    uint8_t buf[128];
+    size_t len = 0;
     unsigned char c;
     while (uart_poll_in(qr, &c) == 0) {
         if (len < sizeof(buf)) { buf[len++] = c; }
     }
-    if (len == 0) { return false; }
-    const bool ack = len >= 3 &&
-        ((buf[0] == 0x33 && buf[1] == 0x75 && buf[2] == 0x02) ||
-         (buf[0] == 0x22 && buf[1] == 0x61 && buf[2] == 0x41));
-    const size_t n = MIN(len, cap - 1);
-    for (size_t i = 0; i < n; i++) {
-        text[i] = (buf[i] >= 0x20 && buf[i] < 0x7f) ? char(buf[i]) : '.';
+    size_t n = 0;
+    for (size_t i = 0; i < len;) {
+        const size_t rest = len - i;
+        if (buf[i] == 0x00) {
+            i += 1;
+        } else if (rest >= 3 && buf[i] == 0x33 && buf[i + 1] == 0x75) {
+            i += 3;                                  /* 33 75 xx */
+        } else if (rest >= 3 && (buf[i] == 0x22 || buf[i] == 0x24) &&
+                   buf[i + 1] == 0x61 && buf[i + 2] == 0x41) {
+            i += 3;                                  /* 22 61 41 / 24 61 41 */
+        } else {
+            if (buf[i] >= 0x20 && buf[i] < 0x7f && n < cap - 1) {
+                text[n++] = char(buf[i]);
+            }
+            i += 1;
+        }
     }
     text[n] = '\0';
-    len = 0;
-    return !ack && n > 0;
+    if (n > 0) {
+        printk("qr: %s\n", text);
+    }
+    return n > 0;
 }
 #endif
 
