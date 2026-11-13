@@ -67,8 +67,6 @@
 		carpark-indicator = &indicator;
 		carpark-flap = &flap;
 		carpark-buzzer = &vib_motor;
-		carpark-bus-enable = &bus_pwr_en;
-		carpark-bus-5v = &bus_5v;
 		carpark-unit-bus = &i2c1;
 	};
 };
@@ -198,52 +196,4 @@
 	gps: gnss-nmea-generic {
 		compatible = "gnss-nmea-generic";
 	};
-};
-
-/*
- * Grove の 5V (BUS_5V) を Core2 自身で作るための設定.
- *
- * Core2 では USB の 5V は AXP192 の ACIN に入り, Grove/M-Bus の 5V は別系統の
- * BUS_5V である. BUS_5V を駆動できるのは EXTEN で有効にする SY7088 boost だけで,
- * その入力は AXP192 の IPSOUT である. ところが BUS_5V は AXP192 の VBUS 入力にも
- * 繋がっているので, VBUS 入力を有効にしたまま boost を入れると
- * IPSOUT -> boost -> VBUS -> IPSOUT の帰還ループになり, レールが落ちて本体ごと
- * 電源が切れる.
- *
- * M5Stack の AXP192::SetBusPowerMode(0) は, boost を入れる前に GPIO0 を LDO 出力に
- * して N_VBUSEN を吊り上げ, VBUS 入力を切っている. board の dts は GPIO0 を
- * open-drain 出力の gpio-hog (bus_pwr_en) にしているが, open-drain の "high" は
- * 単に線を離すだけで, Core2 の N_VBUSEN は外付けプルダウンで low のままになる.
- * つまり board 標準の設定では VBUS 入力を切れず, bus_5v は安全に使えない.
- *
- * ここでは hog を外し, 同じ GPIO0 を Zephyr の LDOIO0 regulator として宣言する.
- * regulator_axp192 は LDOIO0 の enable で GPIO0 を LDO モードに切り替えるので,
- * これが SetBusPowerMode(0) の前半と一致する.
- */
-&axp192_gpio {
-	/delete-node/ axp192_gpio0;
-};
-
-&axp192_regulator {
-	bus_pwr_en: LDOIO0 {
-		regulator-init-microvolt = <3300000>;
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-	};
-};
-
-/*
- * board の dts が ft5336 に screen-width / screen-height を設定しているが,
- * Core2 は swapped-x-y だけで反転を使わない. input_touch.c がこれらを読むのは
- * inverted-x / inverted-y が立っているときだけで, binding も
- * 「反転しない軸では既定の 0 が正しい値」と明記している.
- *
- * 値が入っていると input_touch.c のアサーション
- *   __ASSERT(cfg->inverted_y == (cfg->screen_height > 0), ...)
- * が false == true になり, タッチした瞬間にカーネルパニックで停止する.
- * 使わない寸法なので消す.
- */
-&ft5336_touch {
-	/delete-property/ screen-width;
-	/delete-property/ screen-height;
 };

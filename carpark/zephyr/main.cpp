@@ -15,79 +15,8 @@
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/drivers/regulator.h>
-#include <zephyr/drivers/i2c.h>
-#include <zephyr/init.h>
 #include "slint-zephyr.h"
 #include "carpark.h"
-
-/* ---- Grove の 5V (Core2 の BUS_5V) を起動時に入れ直す ----
- * AXP192 は MCU のリセットで初期化されない. 前のファームが昇圧 (EXTEN) を
- * 立てたまま終わると, ユニットは «前回の続き» で起動し, VL53L0X などが初期化に
- * 失敗する. 一度確実に切ってから入れ直す. Grove の全ユニットがこれに依存する.
- * Core2 以外のボードには bus_5v の alias が無いので, まるごとコンパイルされない.
- */
-#if DT_NODE_EXISTS(DT_ALIAS(carpark_bus_5v))
-static const device *const bus_pwr_en = DEVICE_DT_GET(DT_ALIAS(carpark_bus_enable));
-static const device *const bus_5v = DEVICE_DT_GET(DT_ALIAS(carpark_bus_5v));
-static constexpr uint8_t AXP192_ADDR = 0x34;
-static constexpr uint8_t AXP192_REG_EXTEN = 0x10;
-static constexpr uint8_t AXP192_EXTEN_BIT = BIT(2);
-
-// bus_5v の enable-gpios が指す controller (axp192_gpio) の先の I2C.
-static const device *bus_pmic()
-{
-    return DEVICE_DT_GET(
-        DT_BUS(DT_PARENT(DT_GPIO_CTLR(DT_ALIAS(carpark_bus_5v), enable_gpios))));
-}
-
-// EXTEN の現在値. 読めなければ -1.
-static int bus_exten_bit()
-{
-    const device *i2c = bus_pmic();
-    uint8_t reg = 0;
-    if (!device_is_ready(i2c) ||
-        i2c_reg_read_byte(i2c, AXP192_ADDR, AXP192_REG_EXTEN, &reg) != 0) {
-        return -1;
-    }
-    return (reg & AXP192_EXTEN_BIT) ? 1 : 0;
-}
-
-// 確実に切る. regulator 越しで落ちなければレジスタを直接叩く.
-static bool bus_5v_off()
-{
-    regulator_enable(bus_5v);   // 参照カウントを 1 にしてから
-    regulator_disable(bus_5v);
-    if (bus_exten_bit() == 0) {
-        return true;
-    }
-    const device *i2c = bus_pmic();
-    if (!device_is_ready(i2c)) {
-        return false;
-    }
-    i2c_reg_update_byte(i2c, AXP192_ADDR, AXP192_REG_EXTEN, AXP192_EXTEN_BIT, 0);
-    return bus_exten_bit() == 0;
-}
-
-// sensor driver の init (優先度 90) より前に, POST_KERNEL 80 で入れ直す.
-static int bus_power_init()
-{
-    if (!device_is_ready(bus_pwr_en) || !device_is_ready(bus_5v)) {
-        return 0;
-    }
-    regulator_enable(bus_pwr_en);  // GPIO0 を LDO 出力にして VBUS 入力を切る
-    k_msleep(10);
-    if (!bus_5v_off()) {
-        return 0;
-    }
-    k_msleep(200);                 // ユニットの電源が抜けきるのを待つ
-    regulator_enable(bus_5v);      // 入れ直す
-    k_msleep(100);                 // ユニットの起動を待つ
-    printk("bus: 5V 投入 (EXTEN=%d)\n", bus_exten_bit());
-    return 0;
-}
-SYS_INIT(bus_power_init, POST_KERNEL, 80);
-#endif
 
 using Win = slint::ComponentHandle<AppWindow>;
 
