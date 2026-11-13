@@ -1,6 +1,6 @@
 import { Button } from "std-widgets.slint";
 
-enum Screen { vacant, occupied, paying }
+enum Screen { vacant, occupied, paying, alarm }
 
 export global Format {
     pure function pad2(value: int) -> string {
@@ -122,6 +122,32 @@ component PayingScreen inherits VerticalLayout {
     }
 }
 
+// 精算前に車が居なくなったときの画面. 赤い帯を点滅させる.
+component AlarmScreen inherits VerticalLayout {
+    in property <bool> blink;
+    callback dismiss();
+    Rectangle {
+        vertical-stretch: 2;
+        background: root.blink ? #c00000 : #400000;
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: "警報"; font-size: 72px; color: white;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "精算前に車が出ました"; font-size: 18px; color: white;
+                horizontal-alignment: center;
+            }
+        }
+    }
+    Button {
+        vertical-stretch: 1;
+        text: "警報を止める";
+        clicked => { root.dismiss(); }
+    }
+}
+
 export component AppWindow inherits Window {
     preferred-width: 320px;
     preferred-height: 240px;
@@ -146,16 +172,47 @@ export component AppWindow inherits Window {
         root.screen = Screen.vacant;
     }
 
+    // 警報. 精算前に車が居なくなったら C++ が alarm を呼ぶ.
+    // 車が戻れば (C++ が car-returned を呼ぶ) 駐車の続きとして駐車中に戻る.
+    // 係の人が画面のボタンで止めれば, 車は出ていったものとして空車に戻す.
+    // 駐車時間は警報のあいだも数え続ける.
+    callback alarm();
+    callback car-returned();
+    callback dismiss-alarm();
+    alarm => { root.screen = Screen.alarm; }
+    dismiss-alarm => {
+        ParkingState.occupied = false;
+        root.screen = Screen.vacant;
+    }
+    car-returned => {
+        if root.screen == Screen.alarm { root.screen = Screen.occupied; }
+    }
+
+    // 警報中だけ 0.5 秒ごとに反転する. 画面, LED, 振動モータがこれに合わせる.
+    out property <bool> blink: false;
+    Timer {
+        interval: 500ms;
+        running: root.screen == Screen.alarm;
+        triggered => { root.blink = !root.blink; }
+    }
+    callback blink-changed();
+    changed blink => { root.blink-changed(); }
+
     // QR スキャナは精算画面のあいだだけ読む. 画面が変わるたびに, 今が精算中か
     // どうかを C++ へ知らせる. C++ はこの通知で読み取りを開始・停止する.
     callback scanning-changed(bool);
-    changed screen => { root.scanning-changed(root.screen == Screen.paying); }
+    changed screen => {
+        root.scanning-changed(root.screen == Screen.paying);
+        if root.screen != Screen.alarm { root.blink = false; }
+    }
 
     // LED 用 (リスト 16).
     // LED は画面用の色をそのまま使うと白っぽく光る (3 チャンネルとも値を持つ
     // 淡い色は, 暗くしても彩度が上がらないため). LED 専用に彩度を上げた色にする.
+    // 警報中は blink に合わせて赤を点滅させる.
     out property <color> led-color:
-        ParkingState.occupied ? #ff0000 : #00ff00;
+        root.screen == Screen.alarm ? (root.blink ? #ff0000 : #000000)
+        : ParkingState.occupied ? #ff0000 : #00ff00;
     // 色が変わるたびに C++ へ知らせる (状態が切り替わる瞬間だけ).
     callback led-color-changed();
     changed led-color => { root.led-color-changed(); }
@@ -187,5 +244,9 @@ export component AppWindow inherits Window {
         manual: !root.has-scanner;
         paid => { root.paid(); }
         cancel-pay => { root.screen = Screen.occupied; }
+    }
+    if root.screen == Screen.alarm: AlarmScreen {
+        blink: root.blink;
+        dismiss => { root.dismiss-alarm(); }
     }
 }

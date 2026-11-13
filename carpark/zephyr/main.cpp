@@ -15,6 +15,7 @@
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/regulator.h>
 #include "slint-zephyr.h"
 #include "carpark.h"
 
@@ -140,6 +141,25 @@ int main(void)
     }
 #endif
 
+#if DT_NODE_EXISTS(DT_ALIAS(carpark_buzzer))
+    /* 振動モータ (Core2 本体). 警報中の点滅に合わせて震わせる. */
+    static const device *const buzzer = DEVICE_DT_GET(DT_ALIAS(carpark_buzzer));
+    if (device_is_ready(buzzer)) {
+        window->on_blink_changed([&] {
+            static bool on;
+            const bool want = window->get_blink();
+            if (want != on) {
+                if (want) {
+                    regulator_enable(buzzer);
+                } else {
+                    regulator_disable(buzzer);
+                }
+                on = want;
+            }
+        });
+    }
+#endif
+
 #if DT_NODE_EXISTS(DT_ALIAS(carpark_tof))
     const device *tof = DEVICE_DT_GET(DT_ALIAS(carpark_tof));
     if (device_is_ready(tof)) {
@@ -148,9 +168,31 @@ int main(void)
             [&] {
                 static int detected;
                 static bool armed = true; /* 精算後, 車が一度離れるまで再検知しない */
+                static int away;          /* 駐車中に車が見えない秒数 */
+                static bool present;      /* 駐車中に車を見たか (警報を掛けてよいか) */
                 const int mm = tof_read_mm(tof);
                 const bool near = mm >= 0 && mm < NEAR_MM;
-                if (window->get_screen() != Screen::Vacant) {
+                const Screen screen = window->get_screen();
+
+                /* 駐車中・精算中: 車が DETECT_SECONDS 続けて見えなければ警報.
+                 * 読めなかった回 (mm < 0) は, 居ないとは数えない. */
+                if (screen == Screen::Occupied || screen == Screen::Paying) {
+                    if (near) {
+                        present = true;
+                        away = 0;
+                    } else if (mm >= 0 && present && ++away >= DETECT_SECONDS) {
+                        away = 0;
+                        present = false;
+                        window->invoke_alarm();
+                    }
+                    return;
+                }
+                /* 警報中: 車が戻ったら駐車中に戻す. */
+                if (screen == Screen::Alarm) {
+                    if (near) {
+                        present = true;
+                        window->invoke_car_returned();
+                    }
                     return;
                 }
                 if (!near) {
@@ -161,6 +203,8 @@ int main(void)
                 if (armed && ++detected >= DETECT_SECONDS) {
                     detected = 0;
                     armed = false;
+                    present = true;
+                    away = 0;
                     window->invoke_arrive();
                 }
             });
